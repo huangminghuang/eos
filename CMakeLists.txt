@@ -4,6 +4,64 @@ project( EOSIO )
 
 enable_testing()
 
+set(BUILD_MONGO_DB_PLUGIN FALSE CACHE BOOL "Build mongo database plugin")
+find_program(conan conan)
+
+if (EXISTS ${conan})
+    if(CONAN_EXPORTED) # in conan local cache
+        # standard conan installation, deps will be defined in conanfile.py
+        # and not necessary to call conan again, conan is already running
+        include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+        conan_basic_setup(NO_OUTPUT_DIRS)
+    else(CONAN_EXPORTED) # in user space
+        # Download automatically, you can also just copy the conan.cmake file
+        if(NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
+        message(STATUS "Downloading conan.cmake from https://github.com/conan-io/cmake-conan")
+        file(DOWNLOAD "https://raw.githubusercontent.com/conan-io/cmake-conan/v0.13/conan.cmake"
+                        "${CMAKE_BINARY_DIR}/conan.cmake")
+        endif()
+
+        include(${CMAKE_BINARY_DIR}/conan.cmake)
+        conan_check(VERSION 1.1.0 REQUIRED)
+
+        conan_add_remote(NAME huang
+                        URL https://api.bintray.com/conan/huangminghuang/conan)
+
+        conan_add_remote(NAME conan-community
+                        URL https://api.bintray.com/conan/conan-community/conan)
+
+        conan_add_remote(NAME bincrafters
+                        URL https://api.bintray.com/conan/bincrafters/public-conan)
+
+        if(UNIX AND NOT APPLE)
+            # RHEL DevToolset uses old libstdc++ abi even if c++11 is enabled. We need to detect which abi is actually used.
+            execute_process(COMMAND bash "-c" "echo '#include <string>' | ${CMAKE_CXX_COMPILER} -std=c++14 -x c++ -E -dM - | fgrep '_GLIBCXX_USE_CXX11_ABI 1'"
+                            RESULT_VARIABLE GLIBCXX_NOT_USE_CXX11_ABI)
+            if (GLIBCXX_NOT_USE_CXX11_ABI)
+                set(EXTRA_CONAN_SETTINGS SETTINGS compiler.libcxx=libstdc++)
+            else(GLIBCXX_NOT_USE_CXX11_ABI)
+                set(EXTRA_CONAN_SETTINGS SETTINGS compiler.libcxx=libstdc++11)
+            endif(GLIBCXX_NOT_USE_CXX11_ABI)
+        endif()
+
+        if (BUILD_MONGO_DB_PLUGIN)
+            set(OPTIONAL_REQUIREMENTS mongo-cxx-driver/3.4.0@huangminghuang/stable)
+        endif(BUILD_MONGO_DB_PLUGIN)
+
+        conan_cmake_run(REQUIRES zlib/1.2.11@conan/stable                                
+                                boost/1.67.0@conan/stable
+                                gmp/6.1.2@bincrafters/stable
+                                OpenSSL/1.0.2q@conan/stable
+                                llvm/4.0.1@huangminghuang/stable
+                                ${OPTIONAL_REQUIREMENTS}
+                        BASIC_SETUP
+                        NO_OUTPUT_DIRS
+                        BUILD missing
+                        SETTINGS cppstd=14
+                        ${EXTRA_CONAN_SETTINGS})
+    endif(CONAN_EXPORTED)
+endif(EXISTS ${conan})
+
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
    message(WARNING "CMAKE_INSTALL_PREFIX is set to default path of ${CMAKE_INSTALL_PREFIX}, resetting to ${CMAKE_INSTALL_PREFIX}/eosio")
    set(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/eosio")
@@ -70,22 +128,23 @@ endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS "ON")
 set(BUILD_DOXYGEN FALSE CACHE BOOL "Build doxygen documentation on every make")
-set(BUILD_MONGO_DB_PLUGIN FALSE CACHE BOOL "Build mongo database plugin")
 
-# add defaults for openssl
-if ("${OPENSSL_ROOT_DIR}" STREQUAL "")
-   if (NOT "$ENV{OPENSSL_ROOT_DIR}" STREQUAL "")
-      set(OPENSSL_ROOT_DIR $ENV{OPENSSL_ROOT_DIR})
-      set(OPENSSL_INCLUDE_DIR ${OPENSSL_ROOT_DIR}/include)
-   elseif (APPLE)
-      set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl")
-      set(OPENSSL_INCLUDE_DIR "/usr/local/opt/openssl/include")
-   elseif(UNIX AND NOT APPLE)
-      set(OPENSSL_ROOT_DIR "/usr/include/openssl")
-      set(OPENSSL_INCLUDE_DIR "/usr/include/openssl/include")
-   else()
-      message(FATAL_ERROR "openssl not found and don't know where to look, please specify OPENSSL_ROOT_DIR")
-   endif()
+if (NOT EXISTS ${conan})
+    # add defaults for openssl
+    if ("${OPENSSL_ROOT_DIR}" STREQUAL "")
+    if (NOT "$ENV{OPENSSL_ROOT_DIR}" STREQUAL "")
+        set(OPENSSL_ROOT_DIR $ENV{OPENSSL_ROOT_DIR})
+        set(OPENSSL_INCLUDE_DIR ${OPENSSL_ROOT_DIR}/include)
+    elseif (APPLE)
+        set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl")
+        set(OPENSSL_INCLUDE_DIR "/usr/local/opt/openssl/include")
+    elseif(UNIX AND NOT APPLE)
+        set(OPENSSL_ROOT_DIR "/usr/include/openssl")
+        set(OPENSSL_INCLUDE_DIR "/usr/include/openssl/include")
+    else()
+        message(FATAL_ERROR "openssl not found and don't know where to look, please specify OPENSSL_ROOT_DIR")
+    endif()
+    endif()
 endif()
 
 if(UNIX)

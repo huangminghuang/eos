@@ -4,9 +4,9 @@ if(BUILD_MONGO_DB_PLUGIN)
                mongo_db_plugin.cpp
                ${HEADERS} )
 
-  find_package(libmongoc-1.0 1.8)
+  find_package(libmongoc-static-1.0 1.8)
 
-  if (libmongoc-1.0_FOUND)
+  if (libmongoc-static-1.0_FOUND)
 
       # EOS has no direct dependencies on libmongoc but its shared libraries
       # will need to be present at runtime for the C++ libraries we use:
