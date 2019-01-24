@@ -24,14 +24,14 @@ if (EXISTS ${conan})
         include(${CMAKE_BINARY_DIR}/conan.cmake)
         conan_check(VERSION 1.1.0 REQUIRED)
 
-        conan_add_remote(NAME huang
-                        URL https://api.bintray.com/conan/huangminghuang/conan)
-
         conan_add_remote(NAME conan-community
                         URL https://api.bintray.com/conan/conan-community/conan)
 
         conan_add_remote(NAME bincrafters
                         URL https://api.bintray.com/conan/bincrafters/public-conan)
+
+        conan_add_remote(NAME huang
+                        URL https://api.bintray.com/conan/huangminghuang/conan) 
 
         if(UNIX AND NOT APPLE)
             # RHEL DevToolset uses old libstdc++ abi even if c++11 is enabled. We need to detect which abi is actually used.
@@ -47,6 +47,8 @@ if (EXISTS ${conan})
         if (BUILD_MONGO_DB_PLUGIN)
             set(OPTIONAL_REQUIREMENTS mongo-cxx-driver/3.4.0@huangminghuang/stable)
         endif(BUILD_MONGO_DB_PLUGIN)
+
+        # file(RELATIVE_PATH rel ${CMAKE_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/conanfile.txt)
 
         conan_cmake_run(REQUIRES zlib/1.2.11@conan/stable                                
                                 boost/1.67.0@conan/stable
