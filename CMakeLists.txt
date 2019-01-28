@@ -5,17 +5,17 @@ project( EOSIO )
 enable_testing()
 
 set(BUILD_MONGO_DB_PLUGIN FALSE CACHE BOOL "Build mongo database plugin")
-find_program(conan conan)
 
-if (EXISTS ${conan})
-    if(CONAN_EXPORTED) # in conan local cache
-        # standard conan installation, deps will be defined in conanfile.py
-        # and not necessary to call conan again, conan is already running
-        include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
-        conan_basic_setup(NO_OUTPUT_DIRS)
-    else(CONAN_EXPORTED) # in user space
-        include(${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules/conan.cmake)
-        conan_check(VERSION 1.1.0 REQUIRED)
+if(CONAN_EXPORTED) # in conan local cache
+    # standard conan installation, deps will be defined in conanfile.py
+    # and not necessary to call conan again, conan is already running
+    include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+    conan_basic_setup(NO_OUTPUT_DIRS)
+else(CONAN_EXPORTED) # in user space
+    include(${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules/conan.cmake)
+    conan_check(VERSION 1.1.0)
+
+    if (CONAN_CMD)
 
         conan_add_remote(NAME conan-community
                         URL https://api.bintray.com/conan/conan-community/conan)
@@ -54,8 +54,8 @@ if (EXISTS ${conan})
                         BUILD missing
                         SETTINGS cppstd=14
                         ${EXTRA_CONAN_SETTINGS})
-    endif(CONAN_EXPORTED)
-endif(EXISTS ${conan})
+    endif(CONAN_CMD)
+endif(CONAN_EXPORTED)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
    message(WARNING "CMAKE_INSTALL_PREFIX is set to default path of ${CMAKE_INSTALL_PREFIX}, resetting to ${CMAKE_INSTALL_PREFIX}/eosio")

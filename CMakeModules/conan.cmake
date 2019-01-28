@@ -477,7 +477,7 @@ macro(conan_check)
     set(oneValueArgs VERSION)
     cmake_parse_arguments(CONAN "${options}" "${oneValueArgs}" "" ${ARGN})
 
-    find_program(CONAN_CMD conan)
+    find_program(CONAN_CMD conan HINTS $ENV{HOME}/.local/bin )
     if(NOT CONAN_CMD AND CONAN_REQUIRED)
         message(FATAL_ERROR "Conan executable not found!")
     endif()
