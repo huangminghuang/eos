@@ -28,7 +28,7 @@ else(CONAN_EXPORTED) # in user space
 
         if(UNIX AND NOT APPLE)
             # RHEL DevToolset uses old libstdc++ abi even if c++11 is enabled. We need to detect which abi is actually used.
-            execute_process(COMMAND bash "-c" "echo '#include <string>' | ${CMAKE_CXX_COMPILER} -std=c++14 -x c++ -E -dM - | fgrep '_GLIBCXX_USE_CXX11_ABI 1'"
+            execute_process(COMMAND bash "-c" "echo '#include <string>' | ${CMAKE_CXX_COMPILER} -std=c++11 -x c++ -E -dM - | fgrep '_GLIBCXX_USE_CXX11_ABI 1'"
                             RESULT_VARIABLE GLIBCXX_NOT_USE_CXX11_ABI)
             if (GLIBCXX_NOT_USE_CXX11_ABI)
                 set(EXTRA_CONAN_SETTINGS SETTINGS compiler.libcxx=libstdc++)
@@ -52,8 +52,9 @@ else(CONAN_EXPORTED) # in user space
                         BASIC_SETUP
                         NO_OUTPUT_DIRS
                         BUILD missing
-                        SETTINGS cppstd=14
                         ${EXTRA_CONAN_SETTINGS})
+
+        set(GMP_LIBRARIES ${CONAN_LIBS_GMP})
     endif(CONAN_CMD)
 endif(CONAN_EXPORTED)
 
