@@ -3514,10 +3514,13 @@ int main( int argc, char** argv ) {
 
    // wait transaction
    string trxId;
-   auto wait = app.add_subcommand("wait_transaction", localized("Wait a tracked transaction in the blockchain to become finalized (requires enabling chain_api_v2 plugin)"), false);
-   auto waitSubcommand = wait->add_option("transaction", trxId, localized("the transaction id to wait"));
+   string condition;
+   auto wait = app.add_subcommand("wait_transaction", localized("Wait a tracked transaction in the blockchain to become accepted or finalized (requires enabling chain_api_v2 plugin)"), false);
+   wait->add_option("transaction", trxId, localized("the transaction id to wait"));
+   wait->add_option("condition", condition, localized("the condition for the wait, should be \"accepted\" or \"finalized\""));
+
    wait->set_callback([&] {
-      auto wait_result = call(wait_trx_func, fc::variant_object("transaction_id", trxId));
+      auto wait_result = call(wait_trx_func, fc::mutable_variant_object("transaction_id", trxId)("condition",condition));
       std::cout << fc::json::to_pretty_string(wait_result) << std::endl;
    });
 

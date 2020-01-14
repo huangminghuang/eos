@@ -5,8 +5,8 @@
 #include <eosio/chain_plugin/chain_plugin.hpp>
 #include <eosio/http_plugin/http_plugin.hpp>
 #include <fc/io/json.hpp>
-#include <fc/reflect/reflect.hpp>
 #include <fc/log/log_message.hpp>
+#include <fc/reflect/reflect.hpp>
 
 #include <deque>
 #include <functional>
@@ -24,25 +24,70 @@ fc::variant make_error_results(uint16_t status_code, const char* role, const cha
    return fc::variant(error_results{status_code, role, error_results::error_info(fc::exception({log}), false)});
 }
 
-struct pending_response {
-   pending_response(const url_response_callback& cb, chain_apis::read_write::push_transaction_results& r)
-       : trx_result_cb(cb)
-       , push_trx_result(r) {}
-   uint32_t                                         block_num = 0;
-   url_response_callback                            trx_result_cb;
-   url_response_callback                            wait_result_cb;
-   chain_apis::read_write::push_transaction_results push_trx_result;
+struct tracked_transaction_state {
+   enum wait_condition_t { NONE, ACCEPTED, FINALIZED, INVALID };
 
-   void send_push_response() { trx_result_cb(202, fc::variant(push_trx_result)); }
-   void send_wait_response(uint32_t num) {
-      if (wait_result_cb)
-         wait_result_cb(201, fc::variant_object("block_num", num));
-      else
-         block_num = num;
+   wait_condition_t      wait_condition     = NONE;
+   uint32_t              accepted_block_num  = 0;
+   uint32_t              finalized_block_num = 0;
+   url_response_callback wait_cb;
+
+
+   wait_condition_t parse_condition(std::string cond) {
+      if (cond == "accepted") return ACCEPTED;
+      if (cond == "finalized") return FINALIZED;
+      return INVALID;
    }
-   void send_expired() {
-      if (wait_result_cb) {
-         wait_result_cb( 504, make_error_results(504, "Gateway Timeout", "transaction expired"));
+
+   void on_wait_request(std::string cond, const url_response_callback& cb) {
+
+      wait_condition_t condition = parse_condition(cond);
+      if (condition == FINALIZED) {
+         if (finalized_block_num > 0) {
+            cb(201, fc::variant_object("block_num", finalized_block_num));
+            return;
+         }
+      } else if (condition == ACCEPTED) {
+         if (accepted_block_num > 0) {
+            cb(202, fc::variant_object("block_num", accepted_block_num));
+            return;
+         }
+      } else {
+         FC_THROW_EXCEPTION(eof_exception, "condition must be \"accepted\" or \"finalized\".");
+      }
+
+      if (wait_cb) {
+         cb(403, make_error_results(403, "Forbidden", "pending wait on the transaction exists"));
+      } else {
+         wait_cb = cb;
+         wait_condition = condition;
+      }
+   }
+
+   void on_accepted(uint32_t num) {
+      accepted_block_num = num;
+      if (wait_condition == ACCEPTED) {
+         send_response(202, num);
+      }
+   }
+
+   void on_finalized(uint32_t num) {
+      finalized_block_num = num;
+      if (wait_condition == FINALIZED) {
+         send_response(201, num);
+      }
+   }
+
+   void send_response(uint32_t status_code, uint32_t num) {
+      if (wait_cb) {
+         wait_cb(status_code, fc::variant_object("block_num", num));
+         wait_cb = url_response_callback{};
+      }
+   }
+
+   void on_expired() {
+      if (wait_cb) {
+         wait_cb(504, make_error_results(504, "Gateway Timeout", "transaction expired"));
       }
    }
 };
@@ -58,7 +103,7 @@ struct expiration_queue_element_cmp {
    }
 };
 
-using pending_responses_t = std::unordered_map<transaction_id_type, pending_response>;
+using tracked_transactions_t = std::unordered_map<transaction_id_type, tracked_transaction_state>;
 using expiration_queue_t =
     std::priority_queue<expiration_queue_element, std::deque<expiration_queue_element>, expiration_queue_element_cmp>;
 
@@ -87,7 +132,7 @@ class chain_api_v2_plugin_impl {
    chain_apis::read_write          rw_api;
    fc::optional<scoped_connection> accepted_block_connection;
    fc::optional<scoped_connection> irreversible_block_connection;
-   pending_responses_t             pending_responses;
+   tracked_transactions_t          tracked_transactions;
    expiration_queue_t              expiration_queue;
 };
 
@@ -141,9 +186,9 @@ void chain_api_v2_plugin_impl::handle_transaction_request(string, string body, u
                 }
              } else {
                 auto push_trx_result = result.get<chain_apis::read_write::push_transaction_results>();
-
-                pending_responses.emplace(push_trx_result.transaction_id, pending_response{cb, push_trx_result});
+                tracked_transactions.emplace(push_trx_result.transaction_id, tracked_transaction_state{});
                 expiration_queue.push({push_trx_result.expiration, push_trx_result.transaction_id});
+                cb(202, fc::variant(push_trx_result));
              }
           };
 
@@ -157,18 +202,14 @@ void chain_api_v2_plugin_impl::handle_wait_transaction_request(string, string bo
 
    try {
       rw_api.validate();
-      transaction_id_type id =
-          fc::json::from_string(body).as<fc::variant_object>()["transaction_id"].as<transaction_id_type>();
+      auto request_body = fc::json::from_string(body).as<fc::variant_object>();
+      auto id           = request_body["transaction_id"].as<transaction_id_type>();
 
-      auto itr = pending_responses.find(id);
-      if (itr == pending_responses.end()) {
+      auto itr = tracked_transactions.find(id);
+      if (itr == tracked_transactions.end()) {
          cb(404, make_error_results(404, "Not Found", "the specified transaction is not currently tracked"));
-      } else if (itr->second.block_num > 0) {
-         cb(201, fc::variant_object("block_num", itr->second.block_num));
-      } else if (!itr->second.wait_result_cb){
-         itr->second.wait_result_cb = cb;
       } else {
-         cb(403, make_error_results(403, "Forbidden", "pending wait on the transaction existed"));
+         itr->second.on_wait_request(request_body["condition"].as<string>(), cb);
       }
 
    } catch (...) {
@@ -182,9 +223,9 @@ void chain_api_v2_plugin_impl::on_accepted_block(const block_state_ptr& block_st
                     ? receipt.trx.get<packed_transaction>().get_transaction().id()
                     : receipt.trx.get<transaction_id_type>();
 
-      auto itr = pending_responses.find(id);
-      if (itr != pending_responses.end()) {
-         itr->second.send_push_response();
+      auto itr = tracked_transactions.find(id);
+      if (itr != tracked_transactions.end()) {
+         itr->second.on_accepted(block_state->block->block_num());
       }
    }
 }
@@ -195,10 +236,9 @@ void chain_api_v2_plugin_impl::on_irreversible_block(const block_state_ptr& bloc
                     ? receipt.trx.get<packed_transaction>().get_transaction().id()
                     : receipt.trx.get<transaction_id_type>();
 
-      auto itr = pending_responses.find(id);
-      if (itr != pending_responses.end()) {
-         itr->second.send_wait_response(block_state->block->block_num());
-         pending_responses.erase(itr);
+      auto itr = tracked_transactions.find(id);
+      if (itr != tracked_transactions.end()) {
+         itr->second.on_finalized(block_state->block->block_num());
       }
    }
 
@@ -209,10 +249,10 @@ void chain_api_v2_plugin_impl::clear_expired(fc::time_point timestamp) {
 
    while (expiration_queue.size() && expiration_queue.top().expiration < timestamp) {
       auto id  = expiration_queue.top().transaction_id;
-      auto itr = pending_responses.find(id);
-      if (itr != pending_responses.end()) {
-         itr->second.send_expired();
-         pending_responses.erase(itr);
+      auto itr = tracked_transactions.find(id);
+      if (itr != tracked_transactions.end()) {
+         itr->second.on_expired();
+         tracked_transactions.erase(itr);
       }
       expiration_queue.pop();
    }

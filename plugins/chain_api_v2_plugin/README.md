@@ -1,25 +1,25 @@
 # Chain API v2 Plugin
 
-This plugin provides new APIs to send a transaction to EOS blockchain and then wait for its finalization.
+This plugin provides new APIs to send a transaction to EOS blockchain and then wait for its acceptance or finalization.
 
 Here are the list of new APIs in this plugin.
 
-* Push a transaction to be tracked, the server would response when at least one producer accepts it.
+* Push a transaction to be tracked.
     * URL: `/v2/chain/push_transaction`
     * Method: `POST`
     * Body Params: same with `/v1/chain/push_transaction`
     * Success Response: same with `/v1/chain/push_transaction`
     * Error Response: same with `/v1/chain/push_transaction`
-* Send a transaction to be tracked, the server would response when at least one producer accepts it.
+* Send a transaction to be tracked.
     * URL: `/v2/chain/send_transaction`
     * Method: `POST`
     * Body Params: same with `/v1/chain/send_transaction`
     * Success Response: same with `/v1/chain/send_transaction`
     * Error Response: same with `/v1/chain/send_transaction`
-* Wait for a tracked transaction to be finalized.
+* Wait for a tracked transaction to be accepted or finalized.
     * URL: `/v2/chain/wait_transaction`
     * Method: `POST`
-    * Body Params: `{"transaction_id": "{the tracked transaction id}" }`
+    * Body Params: `{"transaction_id": "the tracked transaction id", "condition": "either accepted or finalized" }`
     * Success Response: `201 Created`
     * Error Response:
         * `403 Forbidden`: there is already a pending waiting request on the transaction.
