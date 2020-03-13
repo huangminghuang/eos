@@ -247,7 +247,7 @@ public:
             try {
                std::vector<public_key_type> keys = json_keys.template as<std::vector<public_key_type>>();
                signing_keys = std::move(keys);
-            } EOS_RETHROW_EXCEPTIONS(public_key_type_exception, "Invalid public key array format '${data}'", 
+            } EOS_RETHROW_EXCEPTIONS(public_key_type_exception, "Invalid public key array format '${data}'",
                                      ("data", fc::json::to_string(json_keys, fc::time_point::maximum())))
          }
       }
@@ -3515,6 +3515,19 @@ int main( int argc, char** argv ) {
       std::cout << fc::json::to_pretty_string(trxs_result) << std::endl;
    });
 
+// wait transaction
+   string trxId;
+   string condition;
+   uint16_t timeout = 300;
+   auto wait = app.add_subcommand("wait_transaction", localized("Wait a tracked transaction in the blockchain to become accepted or finalized (requires enabling the transaction tracker)"), false);
+   wait->add_option("transaction", trxId, localized("the transaction id to wait"));
+   wait->add_option("condition", condition, localized("the condition for the wait, should be \"accepted\" or \"finalized\""));
+   wait->add_option("--timeout", timeout, localized("the number of seconds for the wait request to timeout"));
+
+   wait->set_callback([&] {
+      auto wait_result = call(wait_trx_func, fc::mutable_variant_object("transaction_id", trxId)("condition",condition)("timeout",timeout));
+      std::cout << fc::json::to_pretty_string(wait_result) << std::endl;
+   });
 
    // multisig subcommand
    auto msig = app.add_subcommand("multisig", localized("Multisig contract commands"), false);

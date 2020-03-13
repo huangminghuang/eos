@@ -39,6 +39,9 @@ namespace eosio {
    using chain::action_name;
    using chain::abi_def;
    using chain::abi_serializer;
+   using url_response_callback = std::function<void(int, fc::variant)>;
+
+class chain_plugin_impl;
 
 namespace chain_apis {
 struct empty{};
@@ -87,6 +90,7 @@ public:
    read_only(const controller& db, const fc::microseconds& abi_serializer_max_time)
       : db(db), abi_serializer_max_time(abi_serializer_max_time) {}
 
+   const controller& chain() const { return db; }
    void validate() const {}
 
    void set_shorten_abi_errors( bool f ) { shorten_abi_errors = f; }
@@ -590,10 +594,12 @@ public:
 };
 
 class read_write {
-   controller& db;
+   chain_plugin_impl& impl;
    const fc::microseconds abi_serializer_max_time;
 public:
-   read_write(controller& db, const fc::microseconds& abi_serializer_max_time);
+   read_write(chain_plugin_impl& impl, const fc::microseconds& abi_serializer_max_time);
+
+   controller& chain() const;
    void validate() const;
 
    using push_block_params = chain::signed_block;
@@ -615,6 +621,8 @@ public:
    using send_transaction_params = push_transaction_params;
    using send_transaction_results = push_transaction_results;
    void send_transaction(const send_transaction_params& params, chain::plugin_interface::next_function<send_transaction_results> next);
+
+   void handle_wait_transaction_request(string r, string body, url_response_callback cb);
 
    friend resolver_factory<read_write>;
 };
@@ -645,7 +653,7 @@ public:
             // which is the format used by secondary index
             uint8_t buffer[32];
             memcpy(buffer, v.data(), 32);
-            fixed_bytes<32> fb(buffer); 
+            fixed_bytes<32> fb(buffer);
             return chain::key256_t(fb.get_array());
         };
      }
@@ -663,7 +671,7 @@ public:
             // which is the format used by secondary index
             uint8_t buffer[20];
             memcpy(buffer, v.data(), 20);
-            fixed_bytes<20> fb(buffer); 
+            fixed_bytes<20> fb(buffer);
             return chain::key256_t(fb.get_array());
         };
      }
@@ -704,7 +712,7 @@ public:
    void plugin_shutdown();
 
    chain_apis::read_only get_read_only_api() const { return chain_apis::read_only(chain(), get_abi_serializer_max_time()); }
-   chain_apis::read_write get_read_write_api() { return chain_apis::read_write(chain(), get_abi_serializer_max_time()); }
+   chain_apis::read_write get_read_write_api() { return chain_apis::read_write(*my.get(), get_abi_serializer_max_time()); }
 
    bool accept_block( const chain::signed_block_ptr& block, const chain::block_id_type& id );
    void accept_transaction(const chain::packed_transaction_ptr& trx, chain::plugin_interface::next_function<chain::transaction_trace_ptr> next);

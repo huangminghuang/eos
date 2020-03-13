@@ -78,6 +78,11 @@ void chain_api_plugin::plugin_startup() {
    auto& _http_plugin = app().get_plugin<http_plugin>();
    ro_api.set_shorten_abi_errors( !_http_plugin.verbose_errors() );
 
+   _http_plugin.add_handler(std::string("/v1/chain/wait_transaction"),
+                         [&rw_api](string r, string body, url_response_callback cb) mutable {
+                            rw_api.handle_wait_transaction_request(r, body, cb);
+                         });
+
    _http_plugin.add_api({
       CHAIN_RO_CALL(get_info, 200l),
       CHAIN_RO_CALL(get_activated_protocol_features, 200),

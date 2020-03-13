@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <cstdlib>
 
+#include "transaction_tracker.hpp"
 // reflect chainbase::environment for --print-build-info option
 FC_REFLECT_ENUM( chainbase::environment::os_t,
                  (OS_LINUX)(OS_MACOS)(OS_WINDOWS)(OS_OTHER) )
@@ -179,6 +180,7 @@ public:
    fc::optional<scoped_connection>                                   accepted_transaction_connection;
    fc::optional<scoped_connection>                                   applied_transaction_connection;
 
+   std::unique_ptr<transaction_tracker> trx_tracker;
 };
 
 chain_plugin::chain_plugin()
@@ -273,6 +275,16 @@ void chain_plugin::set_program_options(options_description& cli, options_descrip
          }), "Number of threads to use for EOS VM OC tier-up")
          ("eos-vm-oc-enable", bpo::bool_switch(), "Enable EOS VM OC tier-up runtime")
 #endif
+         ("transaction-tracker-mode", boost::program_options::value<string>()->default_value("none"),
+          "transaction tracker mode (\"none\", \"global\", or \"local\").\n"
+          "In \"global\" mode, every transaction is tracked\n"
+          "In \"local\" mode, only the transaction sent though the node is tracked\n"
+         )
+         ("transaction-track-timeout", boost::program_options::value<uint16_t>()->default_value(600),
+          "transaction track timeout.\n"
+          "When the transaction tracker is in \"global\" mode, it represents the number of seconds a transaction to become untrackable after the transaction turns irreversible.\n"
+          "When the transaction tracker is in \"local\" mode, it represents the number of seconds a transaction to become untrackable after the transaction is sent.\n"
+         )
          ;
 
 // TODO: rate limiting
@@ -836,6 +848,15 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          wlog("The --import-reversible-blocks option should be used by itself.");
       }
 
+      string tracker_mode = options.at("transaction-tracker-mode").as<string>();
+      uint16_t timeout = options.at("transaction-track-timeout").as<uint16_t>();
+      if (tracker_mode == "global") {
+         my->trx_tracker.reset(new global_transaction_tracker(timeout*2));
+      }
+      else if (tracker_mode == "local") {
+         my->trx_tracker.reset(new local_transaction_tracker(timeout*2));
+      }
+
       fc::optional<chain_id_type> chain_id;
       if (options.count( "snapshot" )) {
          my->snapshot_path = options.at( "snapshot" ).as<bfs::path>();
@@ -1057,13 +1078,26 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
                my->accepted_block_header_channel.publish( priority::medium, blk );
             } );
 
-      my->accepted_block_connection = my->chain->accepted_block.connect( [this]( const block_state_ptr& blk ) {
-         my->accepted_block_channel.publish( priority::high, blk );
-      } );
 
-      my->irreversible_block_connection = my->chain->irreversible_block.connect( [this]( const block_state_ptr& blk ) {
-         my->irreversible_block_channel.publish( priority::low, blk );
-      } );
+      if (my->trx_tracker) {
+         my->accepted_block_connection = my->chain->accepted_block.connect( [this]( const block_state_ptr& blk ) {
+            my->accepted_block_channel.publish( priority::high, blk );
+            my->trx_tracker->on_accepted_block(blk);
+         } );
+
+         my->irreversible_block_connection = my->chain->irreversible_block.connect( [this]( const block_state_ptr& blk ) {
+            my->irreversible_block_channel.publish( priority::low, blk );
+            my->trx_tracker->on_irreversible_block(blk);
+         } );
+      } else {
+         my->accepted_block_connection = my->chain->accepted_block.connect( [this]( const block_state_ptr& blk ) {
+            my->accepted_block_channel.publish( priority::high, blk );
+         } );
+
+         my->irreversible_block_connection = my->chain->irreversible_block.connect( [this]( const block_state_ptr& blk ) {
+            my->irreversible_block_channel.publish( priority::low, blk );
+         } );
+      }
 
       my->accepted_transaction_connection = my->chain->accepted_transaction.connect(
             [this]( const transaction_metadata_ptr& meta ) {
@@ -1076,6 +1110,9 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
             } );
 
       my->chain->add_indices();
+
+
+
    } FC_LOG_AND_RETHROW()
 
 }
@@ -1129,14 +1166,18 @@ void chain_plugin::plugin_shutdown() {
    my->chain.reset();
 }
 
-chain_apis::read_write::read_write(controller& db, const fc::microseconds& abi_serializer_max_time)
-: db(db)
+chain_apis::read_write::read_write(chain_plugin_impl& impl, const fc::microseconds& abi_serializer_max_time)
+: impl(impl)
 , abi_serializer_max_time(abi_serializer_max_time)
 {
 }
 
+controller& chain_apis::read_write::chain() const {
+   return *impl.chain;
+}
+
 void chain_apis::read_write::validate() const {
-   EOS_ASSERT( !db.in_immutable_mode(), missing_chain_api_plugin_exception, "Not allowed, node in read-only mode" );
+   EOS_ASSERT( !impl.chain->in_immutable_mode(), missing_chain_api_plugin_exception, "Not allowed, node in read-only mode" );
 }
 
 bool chain_plugin::accept_block(const signed_block_ptr& block, const block_id_type& id ) {
@@ -1921,7 +1962,7 @@ template<typename Api>
 struct resolver_factory {
    static auto make(const Api* api, const fc::microseconds& max_serialization_time) {
       return [api, max_serialization_time](const account_name &name) -> optional<abi_serializer> {
-         const auto* accnt = api->db.db().template find<account_object, by_name>(name);
+         const auto* accnt = api->chain().db().template find<account_object, by_name>(name);
          if (accnt != nullptr) {
             abi_def abi;
             if (abi_serializer::to_abi(accnt->abi, abi)) {
@@ -2099,7 +2140,7 @@ void read_write::push_transaction(const read_write::push_transaction_params& par
             try {
                fc::variant output;
                try {
-                  output = db.to_variant_with_abi( *trx_trace_ptr, abi_serializer_max_time );
+                  output = impl.chain->to_variant_with_abi( *trx_trace_ptr, abi_serializer_max_time );
 
                   // Create map of (closest_unnotified_ancestor_action_ordinal, global_sequence) with action trace
                   std::map< std::pair<uint32_t, uint64_t>, fc::mutable_variant_object > act_traces_map;
@@ -2217,13 +2258,17 @@ void read_write::send_transaction(const read_write::send_transaction_params& par
 
             try {
                fc::variant output;
+               const chain::transaction_id_type& id = trx_trace_ptr->id;
+
                try {
-                  output = db.to_variant_with_abi( *trx_trace_ptr, abi_serializer_max_time );
+                  output = impl.chain->to_variant_with_abi( *trx_trace_ptr, abi_serializer_max_time );
+                  if (impl.trx_tracker) {
+                     impl.trx_tracker->add(id);
+                  }
                } catch( chain::abi_exception& ) {
                   output = *trx_trace_ptr;
                }
 
-               const chain::transaction_id_type& id = trx_trace_ptr->id;
                next(read_write::send_transaction_results{id, output});
             } CATCH_AND_CALL(next);
          }
@@ -2233,6 +2278,15 @@ void read_write::send_transaction(const read_write::send_transaction_params& par
    } catch ( const std::bad_alloc& ) {
       chain_plugin::handle_bad_alloc();
    } CATCH_AND_CALL(next);
+}
+
+void read_write::handle_wait_transaction_request(string r, string body, url_response_callback cb) {
+   if (impl.trx_tracker) {
+      impl.trx_tracker->handle_wait_transaction_request(r, body, cb);
+   }
+   else {
+      cb(422, MAKE_ERROR_RESULT(422, "wait_transaction is only available if transaction tracker is enabled"));
+   }
 }
 
 read_only::get_abi_results read_only::get_abi( const get_abi_params& params )const {
