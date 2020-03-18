@@ -78,4 +78,38 @@ BOOST_AUTO_TEST_CASE(test_restart_with_different_chain_id)
    BOOST_REQUIRE_EXCEPTION(other.open(chain_id), chain_id_type_exception, fc_exception_message_starts_with("chain ID in state "));
 }
 
+BOOST_AUTO_TEST_CASE(test_restart_with_from_block_log)
+{
+   tester chain;
+
+   chain.create_account(N(replay1));
+   chain.produce_blocks(1);
+   chain.create_account(N(replay2));
+   chain.produce_blocks(1);
+   chain.create_account(N(replay3));
+   chain.produce_blocks(1);
+
+   BOOST_REQUIRE_NO_THROW(chain.control->get_account(N(replay1)));
+   BOOST_REQUIRE_NO_THROW(chain.control->get_account(N(replay2)));
+   BOOST_REQUIRE_NO_THROW(chain.control->get_account(N(replay3)));
+
+   chain.close();
+
+   controller::config copied_config = chain.get_config();
+   auto genesis = chain::block_log::extract_genesis_state(chain.get_config().blocks_dir);
+   BOOST_REQUIRE(genesis);
+
+   // remove the state files to make sure we are starting from block log
+   auto   state_path = copied_config.state_dir;
+   remove_all(state_path);
+   fc::create_directories(state_path);
+
+   tester from_block_log_chain(copied_config, *genesis);
+
+   BOOST_REQUIRE_NO_THROW(from_block_log_chain.control->get_account(N(replay1)));
+   BOOST_REQUIRE_NO_THROW(from_block_log_chain.control->get_account(N(replay2)));
+   BOOST_REQUIRE_NO_THROW(from_block_log_chain.control->get_account(N(replay3)));
+
+}
+
 BOOST_AUTO_TEST_SUITE_END()
